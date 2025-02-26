@@ -2,8 +2,33 @@
 
 import { useState, useEffect } from 'react';
 import { useDeepgram } from '../lib/contexts/DeepgramContext';
-import { addDocument } from '../lib/firebase/firebaseUtils';
+import { v4 as uuidv4 } from 'uuid';
 import { motion } from 'framer-motion';
+
+// Local storage key for notes
+const NOTES_STORAGE_KEY = 'local_notes';
+
+// Get notes from local storage
+const getNotes = () => {
+  if (typeof window === 'undefined') return [];
+  
+  const storedNotes = localStorage.getItem(NOTES_STORAGE_KEY);
+  return storedNotes ? JSON.parse(storedNotes) : [];
+};
+
+// Save note to local storage
+const saveNote = (text: string) => {
+  const notes = getNotes();
+  const newNote = {
+    id: uuidv4(),
+    text,
+    timestamp: new Date().toISOString(),
+  };
+  
+  notes.push(newNote);
+  localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(notes));
+  return newNote;
+};
 
 export default function VoiceRecorder() {
   const [isRecording, setIsRecording] = useState(false);
@@ -18,12 +43,9 @@ export default function VoiceRecorder() {
     disconnectFromDeepgram();
     setIsRecording(false);
     
-    // Save the note to Firebase
+    // Save the note to local storage
     if (realtimeTranscript) {
-      await addDocument('notes', {
-        text: realtimeTranscript,
-        timestamp: new Date().toISOString(),
-      });
+      saveNote(realtimeTranscript);
     }
   };
 
