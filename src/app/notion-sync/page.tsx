@@ -8,6 +8,7 @@ import NotionHeader from '@/components/NotionHeader';
 import { Download, RefreshCw, Check, AlertCircle, Info, Edit, Save, X, Clock, Tag, Plus, Trash2, Filter } from 'lucide-react';
 import { getOrCreateUserId } from '@/lib/localStorage/storageUtils';
 import { ExtendedTask } from '@/lib/db/sqliteService';
+import NotionDatabaseManager from '@/components/NotionDatabaseManager';
 
 export default function NotionSync() {
   const { user } = useAuth();
@@ -17,6 +18,7 @@ export default function NotionSync() {
     updated: number;
     unchanged: number;
     total: number;
+    databases?: number;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloadReady, setDownloadReady] = useState(false);
@@ -24,6 +26,8 @@ export default function NotionSync() {
   const [newTag, setNewTag] = useState('');
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [editingField, setEditingField] = useState<{taskId: string, field: string} | null>(null);
+  const [filterSource, setFilterSource] = useState('all');
+  const [filterTag, setFilterTag] = useState('');
 
   // Fetch tasks on component mount
   useEffect(() => {
@@ -48,6 +52,8 @@ export default function NotionSync() {
   const fetchTasks = async () => {
     try {
       const userId = user?.uid || getOrCreateUserId();
+      console.log(`Fetching tasks for user: ${userId}`);
+      
       const response = await fetch(`/api/tasks?userId=${encodeURIComponent(userId)}`);
       
       if (!response.ok) {
@@ -55,6 +61,21 @@ export default function NotionSync() {
       }
       
       const data = await response.json();
+      console.log(`Received ${data.length} tasks from API`);
+      
+      // Log more detailed information about the tasks
+      if (data.length > 0) {
+        console.log('Sample task:', JSON.stringify(data[0], null, 2));
+        console.log('Task sources:', data.map((t: ExtendedTask) => t.source).join(', '));
+        console.log('Task titles:', data.map((t: ExtendedTask) => t.title).join(', '));
+        
+        // Check if tasks have Notion IDs
+        const notionTasks = data.filter((t: ExtendedTask) => t.notionId);
+        console.log(`Found ${notionTasks.length} tasks with Notion IDs`);
+      } else {
+        console.log('No tasks found in the database');
+      }
+      
       setTasks(data);
     } catch (err) {
       console.error('Error fetching tasks:', err);
@@ -67,31 +88,28 @@ export default function NotionSync() {
     setError(null);
     setSyncResult(null);
     setDownloadReady(false);
-    
+
     try {
       const userId = user?.uid || getOrCreateUserId();
-      
-      const response = await fetch('/api/notion-sync', {
+      const response = await fetch('/api/notion-sync/all', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ userId }),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to sync tasks');
       }
-      
+
       const result = await response.json();
       setSyncResult(result);
-      
-      // Refresh tasks after sync
-      fetchTasks();
-    } catch (err) {
-      console.error('Error syncing tasks:', err);
-      setError(err instanceof Error ? err.message : 'Failed to sync tasks. Please try again.');
+      fetchTasks(); // Refresh the task list
+    } catch (error) {
+      console.error('Error syncing tasks:', error);
+      setError(error instanceof Error ? error.message : 'Failed to sync tasks');
     } finally {
       setIsLoading(false);
     }
@@ -100,25 +118,34 @@ export default function NotionSync() {
   const handleExportTasks = async () => {
     setIsLoading(true);
     setError(null);
-    
+    setDownloadReady(false);
+
     try {
       const userId = user?.uid || getOrCreateUserId();
-      
-      // Create a download link to the API endpoint
-      const downloadUrl = `/api/notion-sync?userId=${encodeURIComponent(userId)}`;
-      
-      // Create a temporary link element and trigger the download
+      const response = await fetch(`/api/notion-sync?userId=${userId}`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to export tasks');
+      }
+
+      // Create a download link for the JSON file
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = 'tasks.json';
+      a.href = url;
+      a.download = `notion-tasks-${new Date().toISOString().split('T')[0]}.json`;
       document.body.appendChild(a);
       a.click();
+      window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      
+
       setDownloadReady(true);
-    } catch (err) {
-      console.error('Error exporting tasks:', err);
-      setError('Failed to export tasks. Please try again.');
+    } catch (error) {
+      console.error('Error exporting tasks:', error);
+      setError(error instanceof Error ? error.message : 'Failed to export tasks');
     } finally {
       setIsLoading(false);
     }
@@ -212,17 +239,40 @@ export default function NotionSync() {
     }
   };
 
-  // Filter tasks into habits and one-time tasks
-  const habitTasks = tasks.filter(task => 
-    task.metadata?.tags?.some(tag => ['daily', 'weekly', 'monthly'].includes(tag))
-  );
+  // Filter tasks based on source and tag
+  const filteredTasks = tasks.filter(task => {
+    // First filter by source
+    if (filterSource === 'all') {
+      // No source filtering
+    } else if (filterSource === 'notion' && task.source !== 'notion') {
+      return false;
+    } else if (filterSource === 'app' && task.source !== 'app') {
+      return false;
+    }
+    
+    // Then filter by tag if a tag filter is set
+    if (filterTag && (!task.metadata?.tags || !task.metadata.tags.includes(filterTag))) {
+      return false;
+    }
+    
+    return true;
+  });
   
-  const oneTimeTasks = tasks.filter(task => 
-    !task.metadata?.tags?.some(tag => ['daily', 'weekly', 'monthly'].includes(tag))
-  );
+  // Add debugging for filtered tasks
+  console.log(`Filtered ${filteredTasks.length} tasks out of ${tasks.length} total tasks`);
+  console.log('Filter settings:', { source: filterSource, tag: filterTag });
+  if (filteredTasks.length > 0) {
+    console.log('First filtered task:', filteredTasks[0].title, 'Source:', filteredTasks[0].source);
+  }
+
+  // Separate completed and incomplete tasks
+  const incompleteTasks = filteredTasks.filter(task => !task.completed);
+  const completedTasks = filteredTasks.filter(task => task.completed);
+  
+  console.log(`Incomplete tasks: ${incompleteTasks.length}, Completed tasks: ${completedTasks.length}`);
 
   // Render a task table with the given title and tasks
-  const renderTaskTable = (title: string, taskList: ExtendedTask[], isHabitTable: boolean = false) => {
+  const renderTaskTable = (title: string, taskList: ExtendedTask[]) => {
     return (
       <div className="mb-8">
         <h2 className="mb-4 text-xl font-semibold text-white">{title}</h2>
@@ -232,9 +282,6 @@ export default function NotionSync() {
               <thead className="bg-white/5">
                 <tr>
                   <th className="whitespace-nowrap px-4 py-3 text-left text-sm font-medium text-white/70">Name</th>
-                  {isHabitTable && (
-                    <th className="whitespace-nowrap px-4 py-3 text-left text-sm font-medium text-white/70">Cadence</th>
-                  )}
                   <th className="whitespace-nowrap px-4 py-3 text-left text-sm font-medium text-white/70">Due Date</th>
                   <th className="whitespace-nowrap px-4 py-3 text-left text-sm font-medium text-white/70">Priority</th>
                   <th className="whitespace-nowrap px-4 py-3 text-left text-sm font-medium text-white/70">Status</th>
@@ -266,45 +313,6 @@ export default function NotionSync() {
                           </div>
                         )}
                       </td>
-
-                      {/* Cadence (for habits only) */}
-                      {isHabitTable && (
-                        <td className="whitespace-nowrap px-4 py-3 text-sm text-white min-h-[40px]">
-                          <div className="min-h-[30px] flex items-center">
-                            {editingField?.taskId === task.id && editingField?.field === 'cadence' ? (
-                              <select
-                                defaultValue={task.metadata?.tags?.find(tag => ['daily', 'weekly', 'monthly'].includes(tag)) || ''}
-                                onChange={(e) => updateTaskField(task.id, 'cadence', e.target.value)}
-                                onBlur={() => setEditingField(null)}
-                                autoFocus
-                                className="rounded-md border border-white/20 bg-white/5 px-2 py-1 text-white h-[30px]"
-                              >
-                                <option value="">None</option>
-                                <option value="daily">daily</option>
-                                <option value="weekly">weekly</option>
-                                <option value="monthly">monthly</option>
-                              </select>
-                            ) : (
-                              <div 
-                                onClick={() => setEditingField({taskId: task.id, field: 'cadence'})}
-                                className="cursor-pointer h-[30px] flex items-center"
-                              >
-                                {task.metadata?.tags?.find(tag => ['daily', 'weekly', 'monthly'].includes(tag)) ? (
-                                  <span className={`inline-flex rounded-full px-2 py-1 text-xs ${
-                                    task.metadata.tags.includes('daily') ? 'bg-blue-500/20 text-blue-400' :
-                                    task.metadata.tags.includes('weekly') ? 'bg-green-500/20 text-green-400' :
-                                    'bg-orange-500/20 text-orange-400'
-                                  }`}>
-                                    {task.metadata.tags.find(tag => ['daily', 'weekly', 'monthly'].includes(tag))}
-                                  </span>
-                                ) : (
-                                  <span className="text-white/30">Set cadence</span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      )}
 
                       {/* Due Date */}
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-white min-h-[40px]">
@@ -511,7 +519,7 @@ export default function NotionSync() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={isHabitTable ? 7 : 6} className="px-4 py-8 text-center text-sm text-white/50">
+                    <td colSpan={6} className="px-4 py-8 text-center text-sm text-white/50">
                       No tasks found. Sync with Notion to import tasks.
                     </td>
                   </tr>
@@ -525,105 +533,119 @@ export default function NotionSync() {
   };
 
   return (
-    <main className="min-h-screen bg-background">
-      <AuthCheck>
-        <div className="flex">
-          <Sidebar />
-          <div className="ml-64 flex-1">
-            <NotionHeader />
-            <div className="fixed bottom-0 left-64 right-0 top-16 overflow-y-auto bg-[#191919] p-6">
-              <div className="mx-auto max-w-6xl">
-                <div className="mb-8">
-                  <h1 className="mb-4 text-2xl font-bold text-white">Notion Task Sync</h1>
-                  <p className="mb-6 text-white/70">
-                    Sync your Notion tasks with your local task list. This will download tasks from your Notion databases,
-                    check for duplicates, and merge them with your existing tasks.
-                  </p>
-
-                  <div className="mb-8 space-y-4">
-                    <div className="flex flex-wrap gap-4">
-                      <button
-                        onClick={handleSyncTasks}
-                        disabled={isLoading}
-                        className="flex items-center gap-2 rounded-md bg-purple-600 px-4 py-2 text-white hover:bg-purple-700 disabled:opacity-50"
-                      >
-                        {isLoading ? (
-                          <RefreshCw className="h-5 w-5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-5 w-5" />
-                        )}
-                        <span>Sync Tasks from Notion</span>
-                      </button>
-
-                      <button
-                        onClick={handleExportTasks}
-                        disabled={isLoading}
-                        className="flex items-center gap-2 rounded-md bg-white/10 px-4 py-2 text-white hover:bg-white/20 disabled:opacity-50"
-                      >
-                        <Download className="h-5 w-5" />
-                        <span>Export Tasks as JSON</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {error && (
-                    <div className="mb-4 flex items-center gap-2 rounded-md bg-red-500/20 p-4 text-red-400">
-                      <AlertCircle className="h-5 w-5" />
-                      <span>{error}</span>
-                    </div>
-                  )}
-
-                  {syncResult && (
-                    <div className="mb-4 rounded-md bg-white/5 p-4">
-                      <h2 className="mb-2 flex items-center gap-2 text-lg font-semibold text-white">
-                        <Check className="h-5 w-5 text-green-400" />
-                        <span>Sync Complete</span>
-                      </h2>
-                      <div className="space-y-2 text-white/70">
-                        <p>Total tasks from Notion: {syncResult.total}</p>
-                        <p>New tasks added: {syncResult.added}</p>
-                        <p>Existing tasks updated: {syncResult.updated}</p>
-                        <p>Unchanged tasks: {syncResult.unchanged}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {downloadReady && (
-                    <div className="mb-4 flex items-center gap-2 rounded-md bg-green-500/20 p-4 text-green-400">
-                      <Info className="h-5 w-5" />
-                      <span>Your tasks have been exported and downloaded as a JSON file.</span>
-                    </div>
-                  )}
-
-                  {/* Habits Table */}
-                  {renderTaskTable("Habits & Recurring Tasks", habitTasks, true)}
-
-                  {/* One-Time Tasks Table */}
-                  {renderTaskTable("One-Time Tasks", oneTimeTasks)}
-
-                  <div className="mt-8 rounded-md bg-white/5 p-4">
-                    <h2 className="mb-2 text-lg font-semibold text-white">About Notion Sync</h2>
-                    <div className="space-y-2 text-white/70">
-                      <p>
-                        This feature connects to your Notion databases and imports tasks into your local task list.
-                        It checks for duplicates based on the Notion ID of each task.
-                      </p>
-                      <p>
-                        Tasks are stored in a SQLite database for persistence and better performance.
-                        You can export your tasks as a JSON file for backup or sharing.
-                      </p>
-                      <p>
-                        To configure your Notion integration, make sure your Notion API token and database IDs
-                        are set in your environment variables.
-                      </p>
-                    </div>
-                  </div>
-                </div>
+    <AuthCheck>
+      <div className="flex min-h-screen">
+        <Sidebar />
+        <div className="flex-1 bg-[#121212]">
+          <NotionHeader />
+          <main className="container mx-auto max-w-5xl px-4 py-8">
+            <div className="mb-8 flex items-center justify-between">
+              <h1 className="text-2xl font-bold text-white">Notion Sync</h1>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportTasks}
+                  className="flex items-center gap-1 rounded-md bg-white/10 px-3 py-1.5 text-sm text-white hover:bg-white/20"
+                  disabled={isLoading}
+                >
+                  <Download size={16} />
+                  Export Tasks
+                </button>
+                <button
+                  onClick={handleSyncTasks}
+                  className="flex items-center gap-1 rounded-md bg-purple-600 px-3 py-1.5 text-sm text-white hover:bg-purple-700"
+                  disabled={isLoading}
+                >
+                  <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
+                  Sync All Databases
+                </button>
               </div>
             </div>
-          </div>
+
+            {error && (
+              <div className="mb-6 flex items-center gap-2 rounded-md bg-red-500/20 px-4 py-3 text-red-300">
+                <AlertCircle size={18} />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {syncResult && (
+              <div className="mb-6 flex items-center gap-2 rounded-md bg-green-500/20 px-4 py-3 text-green-300">
+                <Check size={18} />
+                <div>
+                  <p className="font-medium">Sync completed successfully!</p>
+                  <p className="text-sm">
+                    Added: {syncResult.added} | Updated: {syncResult.updated} | Unchanged: {syncResult.unchanged} | Total: {syncResult.total} | Databases: {syncResult.databases || 1}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {downloadReady && (
+              <div className="mb-6 flex items-center gap-2 rounded-md bg-blue-500/20 px-4 py-3 text-blue-300">
+                <Info size={18} />
+                <span>Your tasks are ready to download.</span>
+              </div>
+            )}
+
+            {/* Database Manager Section */}
+            <div className="mb-8">
+              <NotionDatabaseManager userId={user?.uid || getOrCreateUserId()} />
+            </div>
+
+            {/* Tasks Section */}
+            <div className="mt-12">
+              <h2 className="mb-4 text-xl font-semibold text-white">Imported Tasks</h2>
+              
+              {/* Filter Controls */}
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 rounded-md bg-white/5 px-3 py-1.5">
+                  <Filter size={16} className="text-white/50" />
+                  <select
+                    className="bg-transparent text-sm text-white outline-none"
+                    value={filterSource}
+                    onChange={(e) => setFilterSource(e.target.value)}
+                  >
+                    <option value="all">All Sources</option>
+                    <option value="notion">Notion Only</option>
+                    <option value="app">App Only</option>
+                  </select>
+                </div>
+                
+                <div className="flex items-center gap-2 rounded-md bg-white/5 px-3 py-1.5">
+                  <Tag size={16} className="text-white/50" />
+                  <select
+                    className="bg-transparent text-sm text-white outline-none"
+                    value={filterTag}
+                    onChange={(e) => setFilterTag(e.target.value)}
+                  >
+                    <option value="">All Tags</option>
+                    {availableTags.map(tag => (
+                      <option key={tag} value={tag}>{tag}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <button
+                  onClick={fetchTasks}
+                  className="flex items-center gap-1 rounded-md bg-white/10 px-3 py-1.5 text-sm text-white hover:bg-white/20"
+                >
+                  <RefreshCw size={16} />
+                  Refresh Tasks
+                </button>
+              </div>
+              
+              {/* Task count */}
+              <div className="mb-4 text-sm text-white/70">
+                Showing {incompleteTasks.length + completedTasks.length} tasks ({incompleteTasks.length} incomplete, {completedTasks.length} completed)
+              </div>
+              
+              {/* Task Tables */}
+              {renderTaskTable("Incomplete Tasks", incompleteTasks)}
+              {renderTaskTable("Completed Tasks", completedTasks)}
+            </div>
+          </main>
         </div>
-      </AuthCheck>
-    </main>
+      </div>
+    </AuthCheck>
   );
 } 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { mergeNotionTasks, exportTasksToJson } from '@/app/services/notionService';
+import { mergeAllNotionTasks, exportTasksToJson } from '@/app/services/notionService';
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const result = await mergeNotionTasks(userId);
+    const result = await mergeAllNotionTasks(userId);
     
     return NextResponse.json(result);
   } catch (error) {
