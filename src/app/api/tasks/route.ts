@@ -1,29 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserTasks, addTask } from '@/lib/localStorage/storageUtils';
+import { getAllTasks } from '@/lib/db/sqliteService';
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const userId = searchParams.get('userId');
-
+    const userId = request.nextUrl.searchParams.get('userId');
+    
     if (!userId) {
       return NextResponse.json(
         { error: 'User ID is required' },
         { status: 400 }
       );
     }
-
-    const tasks = getUserTasks(userId);
     
-    return NextResponse.json(tasks, { 
-      status: 200,
-      headers: {
-        'Cache-Control': 'no-store'
-      }
-    });
+    const tasks = await getAllTasks(userId);
+    
+    return NextResponse.json(tasks);
   } catch (error) {
     console.error('Error fetching tasks:', error);
     return NextResponse.json(

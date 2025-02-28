@@ -11,5 +11,7 @@ export interface Task {
     energy?: 'low' | 'medium' | 'high';
     tags?: string[];
     dueDate?: string;
+    category?: string;
+    notes?: string;
   };
 } 

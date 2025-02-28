@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { updateTask, deleteTask } from '@/lib/localStorage/storageUtils';
+import { getTaskById, updateTask, deleteTask } from '@/lib/db/sqliteService';
 
 export async function PATCH(
   request: NextRequest,
@@ -7,11 +7,33 @@ export async function PATCH(
 ) {
   try {
     const taskId = params.id;
-    const updates = await request.json();
-
-    updateTask(taskId, updates);
     
-    return NextResponse.json({ success: true }, { status: 200 });
+    if (!taskId) {
+      return NextResponse.json(
+        { error: 'Task ID is required' },
+        { status: 400 }
+      );
+    }
+    
+    // Check if task exists
+    const existingTask = await getTaskById(taskId);
+    if (!existingTask) {
+      return NextResponse.json(
+        { error: 'Task not found' },
+        { status: 404 }
+      );
+    }
+    
+    // Get update data from request body
+    const updates = await request.json();
+    
+    // Update the task
+    await updateTask(taskId, updates);
+    
+    // Get the updated task
+    const updatedTask = await getTaskById(taskId);
+    
+    return NextResponse.json(updatedTask);
   } catch (error) {
     console.error('Error updating task:', error);
     return NextResponse.json(
@@ -28,9 +50,26 @@ export async function DELETE(
   try {
     const taskId = params.id;
     
-    deleteTask(taskId);
+    if (!taskId) {
+      return NextResponse.json(
+        { error: 'Task ID is required' },
+        { status: 400 }
+      );
+    }
     
-    return NextResponse.json({ success: true }, { status: 200 });
+    // Check if task exists
+    const existingTask = await getTaskById(taskId);
+    if (!existingTask) {
+      return NextResponse.json(
+        { error: 'Task not found' },
+        { status: 404 }
+      );
+    }
+    
+    // Delete the task
+    await deleteTask(taskId);
+    
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error deleting task:', error);
     return NextResponse.json(

@@ -13,7 +13,8 @@ import {
   ChevronDown, 
   ChevronRight,
   FileText,
-  Settings
+  Settings,
+  RefreshCw
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -59,6 +60,11 @@ export default function Sidebar() {
         <Link href="/working-times" className={`mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm ${isActive('/working-times')}`}>
           <Clock size={18} />
           <span>Working Times</span>
+        </Link>
+        
+        <Link href="/notion-sync" className={`mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm ${isActive('/notion-sync')}`}>
+          <RefreshCw size={18} />
+          <span>Notion Sync</span>
         </Link>
         
         <Link href="/settings" className={`mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm ${isActive('/settings')}`}>
