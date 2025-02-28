@@ -41,3 +41,28 @@ next-env.d.ts
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Credentials and tokens
+credentials.json
+token.json
+**/credentials*.json
+**/token*.json
+
+# API keys and secrets
+.secret*
+*.key
+*.secret
+
+# Firebase config with API keys
+firebase-config.js
+firebase-config.ts
+
+# Logs
+logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
