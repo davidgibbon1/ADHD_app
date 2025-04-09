@@ -42,7 +42,7 @@ import { CalendarEvent } from "@/lib/googleCalendar"; // Adjust path if needed
 import { NotionDatabase } from "@/lib/db/notionDatabaseService"; // Adjust path if needed
 import { SchedulingRules } from "@/app/services/schedulingService"; // Adjust path if needed
 
-import { cn } from "@/lib/utils";
+import { cn, getBaseUrl } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -189,7 +189,8 @@ export default function SchedulePage() {
 
       try {
         // Check if we have an access token in cookies
-        const response = await fetch("/api/auth/check", {
+        const baseUrl = getBaseUrl();
+        const response = await fetch(`${baseUrl}/api/auth/check`, {
           method: "GET",
           credentials: "include",
         });
@@ -198,24 +199,21 @@ export default function SchedulePage() {
           const authData = await response.json();
           if (authData.authenticated) {
             setIsAuthenticated(true);
-            fetchEvents();
+            await fetchEvents();
           } else {
             setIsAuthenticated(false);
             setShowAuthPrompt(true);
-            setError("Google Calendar authentication required");
-            setIsLoading(false);
           }
         } else {
           setIsAuthenticated(false);
           setShowAuthPrompt(true);
-          setError("Google Calendar authentication required");
-          setIsLoading(false);
         }
       } catch (err) {
         console.error("Error checking authentication:", err);
-        setError("Failed to check authentication status");
-        setShowAuthPrompt(true);
         setIsAuthenticated(false);
+        setShowAuthPrompt(true);
+        setError("Failed to check authentication");
+      } finally {
         setIsLoading(false);
       }
     };
@@ -229,9 +227,10 @@ export default function SchedulePage() {
     try {
       const start = weekStart;
       const end = endOfWeek(weekStart);
+      const baseUrl = getBaseUrl();
 
       const response = await fetch(
-        `/api/calendar/events?start=${start.toISOString()}&end=${end.toISOString()}`,
+        `${baseUrl}/api/calendar/events?start=${start.toISOString()}&end=${end.toISOString()}`,
         {
           method: "GET",
           credentials: "include",
@@ -381,10 +380,11 @@ export default function SchedulePage() {
       const updatedEvents = events.filter((e) => e.isUpdated && !e.isTemp);
       // Already tracked in state
       const removedEventIds = [...deletedEvents];
+      const baseUrl = getBaseUrl();
 
       // 1. Process new events
       for (const event of createdEvents) {
-        const response = await fetch("/api/calendar/events", {
+        const response = await fetch(`${baseUrl}/api/calendar/events`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -413,7 +413,7 @@ export default function SchedulePage() {
 
       // 2. Process updated events
       for (const event of updatedEvents) {
-        const response = await fetch("/api/calendar/events", {
+        const response = await fetch(`${baseUrl}/api/calendar/events`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -444,7 +444,7 @@ export default function SchedulePage() {
 
       // 3. Process deletions
       for (const id of removedEventIds) {
-        const response = await fetch(`/api/calendar/events?eventId=${id}`, {
+        const response = await fetch(`${baseUrl}/api/calendar/events?eventId=${id}`, {
           method: "DELETE",
           credentials: "include",
         });
@@ -933,7 +933,8 @@ export default function SchedulePage() {
         const userIdLocal = user?.uid || getOrCreateUserId();
         console.log("🔄 DATABASES: Fetching databases for user:", userIdLocal);
         
-        const response = await fetch(`/api/notion-databases?userId=${encodeURIComponent(userIdLocal)}`);
+        const baseUrl = getBaseUrl();
+        const response = await fetch(`${baseUrl}/api/notion-databases?userId=${encodeURIComponent(userIdLocal)}`);
         if (!response.ok) {
           throw new Error(`Failed to fetch Notion databases: ${response.status}`);
         }
@@ -966,7 +967,8 @@ export default function SchedulePage() {
     try {
       // Use getOrCreateUserId to avoid null user issues
       const userId = user?.uid || getOrCreateUserId();
-      const response = await fetch(`/api/scheduling-rules?userId=${userId}`);
+      const baseUrl = getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/scheduling-rules?userId=${userId}`);
       if (!response.ok) throw new Error("Failed to fetch scheduling rules");
       const data = await response.json();
       setSchedulingRules(data);
@@ -1004,9 +1006,10 @@ export default function SchedulePage() {
       
       // Get the user ID
       const userId = user?.uid || getOrCreateUserId();
+      const baseUrl = getBaseUrl();
 
       // Step 1: Generate the scheduled events
-      const response = await fetch("/api/schedule-tasks/preview", {
+      const response = await fetch(`${baseUrl}/api/schedule-tasks/preview`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1036,7 +1039,7 @@ export default function SchedulePage() {
       }
 
       // Step 2: Upload the events directly without showing preview
-      const uploadResponse = await fetch("/api/schedule-tasks/upload", {
+      const uploadResponse = await fetch(`${baseUrl}/api/schedule-tasks/upload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1079,7 +1082,8 @@ export default function SchedulePage() {
       console.log("🧪 TEST: Fetching tasks directly from API for database:", databaseId);
       
       // Use the same approach as the notion-sync page
-      const response = await fetch(`/api/tasks?userId=${encodeURIComponent(userId)}`);
+      const baseUrl = getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/tasks?userId=${encodeURIComponent(userId)}`);
       if (!response.ok) {
         console.error("🧪 TEST: Failed to fetch tasks:", response.status);
         return;
@@ -1129,6 +1133,7 @@ export default function SchedulePage() {
     try {
       // Set the startDate to the beginning of the current week
       const startDate = weekStart;
+      const baseUrl = getBaseUrl();
       
       console.log("▶️ SCHEDULING: Scheduling tasks with params:", {
         userId: user?.uid || getOrCreateUserId(),
@@ -1140,7 +1145,7 @@ export default function SchedulePage() {
       // Show feedback to user
       setError("Requesting schedule preview... Please wait");
       
-      const response = await fetch("/api/schedule-tasks/preview", {
+      const response = await fetch(`${baseUrl}/api/schedule-tasks/preview`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
