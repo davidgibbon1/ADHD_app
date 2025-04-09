@@ -22,6 +22,7 @@ export interface NotionDatabase {
   createdAt: number;
   updatedAt: number;
   isActive: boolean;
+  color?: string;
 }
 
 // Initialize database
@@ -30,7 +31,19 @@ let db: Database.Database;
 // This function ensures we only initialize the database in a server context
 export function getNotionDatabasesDb(): Database.Database {
   if (!db) {
-    db = new Database(DB_PATH);
+    // Initialize with configuration for better concurrency handling
+    db = new Database(DB_PATH, {
+      // Set a longer busy timeout (5 seconds) to wait for locks to be released
+      timeout: 5000,
+      // Enable verbose mode for better debugging in development
+      verbose: process.env.NODE_ENV === 'development' ? console.log : undefined
+    });
+    
+    // Enable WAL (Write-Ahead Logging) mode for better concurrency
+    db.pragma('journal_mode = WAL');
+    
+    // Set busy timeout to wait instead of failing immediately
+    db.pragma('busy_timeout = 5000');
     
     // Create tables if they don't exist
     db.exec(`
@@ -43,11 +56,24 @@ export function getNotionDatabasesDb(): Database.Database {
         lastSynced INTEGER,
         createdAt INTEGER NOT NULL,
         updatedAt INTEGER NOT NULL,
-        isActive INTEGER NOT NULL DEFAULT 1
+        isActive INTEGER NOT NULL DEFAULT 1,
+        color TEXT
       );
       
       CREATE INDEX IF NOT EXISTS idx_notion_databases_userId ON notion_databases(userId);
     `);
+    
+    // Add color column if it doesn't exist (for existing databases)
+    try {
+      const hasColorColumn = db.prepare("PRAGMA table_info(notion_databases)").all()
+        .some((col: any) => col.name === 'color');
+      
+      if (!hasColorColumn) {
+        db.exec("ALTER TABLE notion_databases ADD COLUMN color TEXT;");
+      }
+    } catch (err) {
+      console.error("Error checking or adding color column:", err);
+    }
   }
   
   return db;
@@ -73,6 +99,7 @@ export async function getAllNotionDatabases(userId: string): Promise<NotionDatab
     createdAt: number;
     updatedAt: number;
     isActive: number;
+    color: string | null;
   }>;
   
   return rows.map((row) => ({
@@ -84,7 +111,8 @@ export async function getAllNotionDatabases(userId: string): Promise<NotionDatab
     lastSynced: row.lastSynced || undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    isActive: Boolean(row.isActive)
+    isActive: Boolean(row.isActive),
+    color: row.color || undefined
   }));
 }
 
@@ -105,6 +133,7 @@ export async function getNotionDatabaseById(id: string): Promise<NotionDatabase 
     createdAt: number;
     updatedAt: number;
     isActive: number;
+    color: string | null;
   } | undefined;
   
   if (!row) return null;
@@ -118,7 +147,8 @@ export async function getNotionDatabaseById(id: string): Promise<NotionDatabase 
     lastSynced: row.lastSynced || undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    isActive: Boolean(row.isActive)
+    isActive: Boolean(row.isActive),
+    color: row.color || undefined
   };
 }
 
@@ -130,9 +160,9 @@ export async function createNotionDatabase(database: Omit<NotionDatabase, 'id' |
   
   const insertDb = db.prepare(`
     INSERT INTO notion_databases (
-      id, userId, notionDatabaseId, name, description, lastSynced, createdAt, updatedAt, isActive
+      id, userId, notionDatabaseId, name, description, lastSynced, createdAt, updatedAt, isActive, color
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   insertDb.run(
@@ -144,7 +174,8 @@ export async function createNotionDatabase(database: Omit<NotionDatabase, 'id' |
     database.lastSynced || null,
     now,
     now,
-    database.isActive ? 1 : 0
+    database.isActive ? 1 : 0,
+    database.color || null
   );
   
   return id;
@@ -189,6 +220,11 @@ export async function updateNotionDatabase(id: string, updates: Partial<Omit<Not
     params.push(updates.isActive ? 1 : 0);
   }
   
+  if (updates.color !== undefined) {
+    updateFields.push('color = ?');
+    params.push(updates.color || null);
+  }
+  
   // Always update the updatedAt timestamp
   updateFields.push('updatedAt = ?');
   params.push(now);
@@ -229,6 +265,7 @@ export async function findNotionDatabaseByNotionId(userId: string, notionDatabas
     createdAt: number;
     updatedAt: number;
     isActive: number;
+    color: string | null;
   } | undefined;
   
   if (!row) return null;
@@ -242,7 +279,8 @@ export async function findNotionDatabaseByNotionId(userId: string, notionDatabas
     lastSynced: row.lastSynced || undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    isActive: Boolean(row.isActive)
+    isActive: Boolean(row.isActive),
+    color: row.color || undefined
   };
 }
 

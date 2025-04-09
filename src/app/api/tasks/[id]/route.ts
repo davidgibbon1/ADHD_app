@@ -37,7 +37,7 @@ export async function PATCH(
   } catch (error) {
     console.error('Error updating task:', error);
     return NextResponse.json(
-      { error: 'Failed to update task' },
+      { error: 'Failed to update task', details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }
@@ -48,9 +48,12 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    console.log(`DELETE request received for task: ${params.id}`);
+    
     const taskId = params.id;
     
     if (!taskId) {
+      console.error('DELETE error: Task ID is required');
       return NextResponse.json(
         { error: 'Task ID is required' },
         { status: 400 }
@@ -58,8 +61,11 @@ export async function DELETE(
     }
     
     // Check if task exists
+    console.log(`Checking if task ${taskId} exists`);
     const existingTask = await getTaskById(taskId);
+    
     if (!existingTask) {
+      console.error(`DELETE error: Task not found with ID ${taskId}`);
       return NextResponse.json(
         { error: 'Task not found' },
         { status: 404 }
@@ -67,13 +73,26 @@ export async function DELETE(
     }
     
     // Delete the task
-    await deleteTask(taskId);
+    console.log(`Deleting task ${taskId} (${existingTask.title})`);
+    try {
+      await deleteTask(taskId);
+      console.log(`Task ${taskId} successfully deleted`);
+    } catch (deleteError) {
+      console.error(`Error in deleteTask function:`, deleteError);
+      throw deleteError;
+    }
     
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ 
+      success: true,
+      message: `Task '${existingTask.title}' successfully deleted` 
+    });
   } catch (error) {
     console.error('Error deleting task:', error);
     return NextResponse.json(
-      { error: 'Failed to delete task' },
+      { 
+        error: 'Failed to delete task', 
+        details: error instanceof Error ? error.message : String(error) 
+      },
       { status: 500 }
     );
   }

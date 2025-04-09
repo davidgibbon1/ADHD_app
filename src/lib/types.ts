@@ -14,4 +14,16 @@ export interface Task {
     category?: string;
     notes?: string;
   };
+}
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  userId: string;
+  description?: string;
+  location?: string;
+  color?: string;
+  databaseId?: string;
 } 

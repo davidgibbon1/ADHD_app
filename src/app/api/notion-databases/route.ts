@@ -71,9 +71,56 @@ export async function POST(request: NextRequest) {
         if (!description) {
           dbDescription = dbInfo.description;
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error fetching database info from Notion:', error);
-        // Continue with user-provided name
+        
+        // Map the error codes to user-friendly messages
+        const errorCode = error.message || 'UNKNOWN_ERROR';
+        let status = 500;
+        let errorMessage = 'Failed to connect to Notion database';
+        
+        switch (errorCode) {
+          case 'NOTION_API_MISSING_TOKEN':
+            status = 500;
+            errorMessage = 'Notion API token is not configured';
+            break;
+          case 'NOTION_INVALID_DATABASE_ID':
+          case 'NOTION_MALFORMED_DATABASE_ID':
+            status = 400;
+            errorMessage = 'The Notion database ID provided is invalid';
+            break;
+          case 'NOTION_DATABASE_NOT_FOUND':
+            status = 404;
+            errorMessage = 'The Notion database could not be found. Check if the database ID is correct and you have access to it';
+            break;
+          case 'NOTION_UNAUTHORIZED_ACCESS':
+            status = 403;
+            errorMessage = 'You do not have permission to access this Notion database. Make sure your integration has access';
+            break;
+          case 'NOTION_RATE_LIMITED':
+            status = 429;
+            errorMessage = 'Rate limit exceeded for Notion API. Please try again later';
+            break;
+          case 'NOTION_SERVER_ERROR':
+            status = 502;
+            errorMessage = 'Notion server returned an error. Please try again later';
+            break;
+          case 'NOTION_NETWORK_ERROR':
+            status = 504;
+            errorMessage = 'Could not connect to Notion. Please check your internet connection and try again';
+            break;
+          default:
+            status = 500;
+            errorMessage = 'An unknown error occurred while connecting to Notion';
+        }
+        
+        return NextResponse.json(
+          { 
+            error: errorMessage,
+            code: errorCode 
+          },
+          { status }
+        );
       }
     }
     
@@ -89,11 +136,21 @@ export async function POST(request: NextRequest) {
     const newDatabase = await getNotionDatabaseById(id);
     
     return NextResponse.json(newDatabase, { status: 201 });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating database:', error);
+    
+    // Provide more context in error messages
+    let errorMsg = 'Failed to create database';
+    let status = 500;
+    
+    if (error.message && error.message.includes('SQLITE_CONSTRAINT')) {
+      errorMsg = 'A database with this information already exists';
+      status = 409;
+    }
+    
     return NextResponse.json(
-      { error: 'Failed to create database' },
-      { status: 500 }
+      { error: errorMsg, details: error.message || 'Unknown error' },
+      { status }
     );
   }
 }
@@ -102,7 +159,7 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const data = await request.json();
-    const { id, name, description, isActive } = data;
+    const { id, name, description, isActive, color } = data;
     
     if (!id) {
       return NextResponse.json(
@@ -120,12 +177,16 @@ export async function PUT(request: NextRequest) {
       );
     }
     
+    // Prepare update object with only the fields that are provided
+    const updateData: any = {};
+    
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (isActive !== undefined) updateData.isActive = isActive;
+    if (color !== undefined) updateData.color = color;
+    
     // Update the database
-    await updateNotionDatabase(id, {
-      name,
-      description,
-      isActive
-    });
+    await updateNotionDatabase(id, updateData);
     
     // Get the updated database
     const updatedDb = await getNotionDatabaseById(id);

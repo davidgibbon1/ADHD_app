@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllTasks } from '@/lib/db/sqliteService';
+import { getAllTasks, createTask } from '@/lib/db/sqliteService';
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const taskId = addTask(taskData);
+    const taskId = await createTask(taskData);
     
     return NextResponse.json({ id: taskId }, { status: 201 });
   } catch (error) {

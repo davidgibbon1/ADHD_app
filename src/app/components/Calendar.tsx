@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import { AlertCircle, Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import { DayPicker, DayContent, DayProps } from 'react-day-picker';
 import { format } from 'date-fns';
 import { Task } from '@/lib/types';
@@ -29,6 +29,7 @@ const TaskDayContent: React.FC<TaskDayContentProps> = ({ date, activeModifiers }
 export function Calendar({ tasks, onSelectDate }: CalendarProps) {
   const [date, setDate] = React.useState<Date>();
   const [month, setMonth] = React.useState<Date>(new Date());
+  const [showAuthPrompt, setShowAuthPrompt] = React.useState(false);
 
   const handleSelect = (date: Date | undefined) => {
     setDate(date);
@@ -178,6 +179,29 @@ export function Calendar({ tasks, onSelectDate }: CalendarProps) {
           </div>
         )}
       </div>
+      {showAuthPrompt && (
+        <div className="rounded-md bg-yellow-500/20 p-4 mb-4">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <AlertCircle className="h-5 w-5 text-yellow-400" aria-hidden="true" />
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-yellow-400">Authentication Required</h3>
+              <div className="mt-2 text-sm text-yellow-300">
+                <p>Your Google Calendar connection has expired or is invalid.</p>
+              </div>
+              <div className="mt-4">
+                <a
+                  href="/api/auth/google"
+                  className="inline-flex items-center rounded-md bg-yellow-500/20 px-3 py-2 text-sm font-semibold text-yellow-400 shadow-sm hover:bg-yellow-500/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-500"
+                >
+                  Reconnect Google Calendar
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 

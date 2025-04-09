@@ -77,9 +77,11 @@ The following environment variables are required:
 
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`: Google OAuth credentials
 - `NEXT_PUBLIC_FIREBASE_*`: Firebase configuration variables
-- `NOTION_AUTH_TOKEN` and `NOTION_DATABASE_IDS`: Notion API credentials
+- `NOTION_AUTH_TOKEN`: Notion API token for integration
 - `DEEPGRAM_API_KEY`: Deepgram API key for voice recognition
 - `REPLICATE_API_TOKEN`: Replicate API token for AI image generation
+
+Note: Notion database IDs are stored securely in the application's SQLite database, not in environment variables.
 
 See `.env.example` for a complete list of required variables.
 

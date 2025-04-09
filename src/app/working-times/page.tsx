@@ -1,63 +1,93 @@
 'use client';
 
-import { useState } from 'react';
-import AuthCheck from '@/components/AuthCheck';
+import { useState, useEffect, useCallback } from 'react';
+import { Clock, AlertCircle } from 'lucide-react';
+import { useAuth } from '@/lib/hooks/useAuth';
 import Sidebar from '@/components/Sidebar';
+import AuthCheck from '@/components/AuthCheck';
 import NotionHeader from '@/components/NotionHeader';
-import { Clock, Plus, X, Save } from 'lucide-react';
-
-interface WorkingTime {
-  id: number;
-  day: string;
-  startTime: string;
-  endTime: string;
-  isActive: boolean;
-}
+import { getOrCreateUserId } from '@/lib/localStorage/storageUtils';
+import { Button } from '@/components/ui/button';
+import IdealWeek from './ideal-week';
+import WeekView from './week-view';
 
 export default function WorkingTimes() {
-  const [workingTimes, setWorkingTimes] = useState<WorkingTime[]>([
-    { id: 1, day: 'Monday', startTime: '09:00', endTime: '17:00', isActive: true },
-    { id: 2, day: 'Tuesday', startTime: '09:00', endTime: '17:00', isActive: true },
-    { id: 3, day: 'Wednesday', startTime: '09:00', endTime: '17:00', isActive: true },
-    { id: 4, day: 'Thursday', startTime: '09:00', endTime: '17:00', isActive: true },
-    { id: 5, day: 'Friday', startTime: '09:00', endTime: '15:00', isActive: true },
-    { id: 6, day: 'Saturday', startTime: '10:00', endTime: '14:00', isActive: false },
-    { id: 7, day: 'Sunday', startTime: '10:00', endTime: '14:00', isActive: false },
-  ]);
-  const [saveMessage, setSaveMessage] = useState('');
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState<'week' | 'ideal'>('week');
+  const [isLoading, setIsLoading] = useState(true);
+  const [userId, setUserId] = useState<string>('');
+  const [hasWeekUnsavedChanges, setHasWeekUnsavedChanges] = useState(false);
+  const [hasIdealUnsavedChanges, setHasIdealUnsavedChanges] = useState(false);
+  const [showUnsavedWarning, setShowUnsavedWarning] = useState(false);
+  const [pendingTabChange, setPendingTabChange] = useState<'week' | 'ideal' | null>(null);
 
-  const handleToggleDay = (id: number) => {
-    setWorkingTimes(
-      workingTimes.map(time => 
-        time.id === id ? { ...time, isActive: !time.isActive } : time
-      )
+  useEffect(() => {
+    if (user) {
+      const id = user.uid || getOrCreateUserId();
+      setUserId(id);
+      setIsLoading(false);
+    }
+  }, [user]);
+
+  const handleTabChange = (tab: 'week' | 'ideal') => {
+    // If trying to switch from week tab with unsaved changes
+    if (activeTab === 'week' && tab === 'ideal' && hasWeekUnsavedChanges) {
+      setShowUnsavedWarning(true);
+      setPendingTabChange('ideal');
+      return;
+    }
+    
+    // If trying to switch from ideal tab with unsaved changes
+    if (activeTab === 'ideal' && tab === 'week' && hasIdealUnsavedChanges) {
+      setShowUnsavedWarning(true);
+      setPendingTabChange('week');
+      return;
+    }
+    
+    // No unsaved changes, proceed with tab change
+    setActiveTab(tab);
+  };
+
+  const handleWeekUnsavedChanges = useCallback((hasChanges: boolean) => {
+    setHasWeekUnsavedChanges(hasChanges);
+  }, []);
+
+  const handleIdealUnsavedChanges = useCallback((hasChanges: boolean) => {
+    setHasIdealUnsavedChanges(hasChanges);
+  }, []);
+
+  const discardChanges = () => {
+    if (pendingTabChange) {
+      setActiveTab(pendingTabChange);
+      setPendingTabChange(null);
+      setShowUnsavedWarning(false);
+    }
+  };
+
+  const keepEditing = () => {
+    setPendingTabChange(null);
+    setShowUnsavedWarning(false);
+  };
+
+  if (isLoading) {
+    return (
+      <main className="min-h-screen bg-background">
+        <AuthCheck>
+          <div className="flex">
+            <Sidebar />
+            <div className="ml-64 flex-1">
+              <NotionHeader />
+              <div className="fixed bottom-0 left-64 right-0 top-16 overflow-y-auto bg-[#191919] p-6">
+                <div className="flex items-center justify-center h-full">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </AuthCheck>
+      </main>
     );
-  };
-
-  const handleTimeChange = (id: number, field: 'startTime' | 'endTime', value: string) => {
-    setWorkingTimes(
-      workingTimes.map(time => 
-        time.id === id ? { ...time, [field]: value } : time
-      )
-    );
-  };
-
-  const calculateTotalHours = () => {
-    return workingTimes
-      .filter(time => time.isActive)
-      .reduce((total, time) => {
-        const start = new Date(`2000-01-01T${time.startTime}`);
-        const end = new Date(`2000-01-01T${time.endTime}`);
-        const diffHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-        return total + diffHours;
-      }, 0);
-  };
-
-  const handleSave = () => {
-    // In a real app, we would save these settings to a database or local storage
-    setSaveMessage('Working times saved successfully!');
-    setTimeout(() => setSaveMessage(''), 3000);
-  };
+  }
 
   return (
     <main className="min-h-screen bg-background">
@@ -67,94 +97,65 @@ export default function WorkingTimes() {
           <div className="ml-64 flex-1">
             <NotionHeader />
             <div className="fixed bottom-0 left-64 right-0 top-16 overflow-y-auto bg-[#191919] p-6">
-              <div className="mx-auto max-w-3xl">
+              <div className="mx-auto max-w-5xl">
                 <div className="mb-8 flex items-center">
                   <Clock size={24} className="mr-3 text-purple-500" />
-                  <h1 className="text-3xl font-bold text-white">Set Working Times</h1>
+                  <h1 className="text-3xl font-bold text-white">Time Blocking</h1>
                 </div>
 
-                {saveMessage && (
-                  <div className="mb-4 rounded-md bg-green-500/20 p-3 text-green-400">
-                    {saveMessage}
+                {showUnsavedWarning && (
+                  <div className="mb-4 rounded-md bg-yellow-500/20 p-4 text-yellow-400 border border-yellow-500/50">
+                    <div className="flex items-start">
+                      <AlertCircle className="h-5 w-5 mr-2 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium mb-2">
+                          You have unsaved changes. What would you like to do?
+                        </p>
+                        <div className="flex space-x-3">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={keepEditing}
+                            className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10"
+                          >
+                            Keep editing
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={discardChanges}
+                            className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10"
+                          >
+                            Discard changes
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
 
-                <p className="mb-8 text-white/70">
-                  Define your working hours for each day of the week to help schedule your tasks effectively.
-                </p>
-
-                <div className="mb-8 rounded-lg border border-white/10 bg-white/5 p-6 backdrop-blur-lg">
-                  <div className="mb-4 flex items-center justify-between">
-                    <h2 className="text-xl font-semibold text-white">Weekly Schedule</h2>
-                    <div className="text-sm text-white/70">
-                      Total: {calculateTotalHours().toFixed(1)} hours/week
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    {workingTimes.map(time => (
-                      <div 
-                        key={time.id} 
-                        className={`rounded-lg border p-4 transition-colors ${
-                          time.isActive 
-                            ? 'border-purple-500/30 bg-purple-500/10' 
-                            : 'border-white/10 bg-white/5 opacity-60'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center">
-                            <input
-                              type="checkbox"
-                              checked={time.isActive}
-                              onChange={() => handleToggleDay(time.id)}
-                              className="mr-3 h-4 w-4 rounded border-white/30 bg-white/10 text-purple-600 focus:ring-purple-500"
-                            />
-                            <span className="font-medium text-white">{time.day}</span>
-                          </div>
-                          
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="time"
-                              value={time.startTime}
-                              onChange={(e) => handleTimeChange(time.id, 'startTime', e.target.value)}
-                              disabled={!time.isActive}
-                              className="rounded border border-white/10 bg-white/5 px-2 py-1 text-sm text-white focus:outline-none focus:ring-1 focus:ring-purple-500 disabled:opacity-50"
-                            />
-                            <span className="text-white">to</span>
-                            <input
-                              type="time"
-                              value={time.endTime}
-                              onChange={(e) => handleTimeChange(time.id, 'endTime', e.target.value)}
-                              disabled={!time.isActive}
-                              className="rounded border border-white/10 bg-white/5 px-2 py-1 text-sm text-white focus:outline-none focus:ring-1 focus:ring-purple-500 disabled:opacity-50"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-white/10 bg-white/5 p-6 backdrop-blur-lg">
-                  <h2 className="mb-4 text-xl font-semibold text-white">Productivity Tips</h2>
-                  <ul className="list-inside list-disc space-y-2 text-white/70">
-                    <li>Set realistic working hours that match your energy levels</li>
-                    <li>Include buffer time between work sessions</li>
-                    <li>Schedule your most important tasks during your peak productivity hours</li>
-                    <li>Consider time blocking for deep work sessions</li>
-                    <li>Don't forget to schedule breaks and time for self-care</li>
-                  </ul>
-                </div>
-
-                <div className="mt-8 flex justify-end">
-                  <button 
-                    onClick={handleSave}
-                    className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 font-medium text-white hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                <div className="grid grid-cols-2 gap-2 mb-6">
+                  <Button
+                    variant={activeTab === 'week' ? 'default' : 'outline'}
+                    className={activeTab === 'week' ? 'bg-purple-600' : 'bg-[#252525] text-white border-[#333333]'}
+                    onClick={() => handleTabChange('week')}
                   >
-                    <Save size={16} />
-                    <span>Save Working Times</span>
-                  </button>
+                    This Week
+                  </Button>
+                  <Button
+                    variant={activeTab === 'ideal' ? 'default' : 'outline'}
+                    className={activeTab === 'ideal' ? 'bg-purple-600' : 'bg-[#252525] text-white border-[#333333]'}
+                    onClick={() => handleTabChange('ideal')}
+                  >
+                    Ideal Week Template
+                  </Button>
                 </div>
+
+                {activeTab === 'week' ? (
+                  <WeekView userId={userId} onHasUnsavedChanges={handleWeekUnsavedChanges} />
+                ) : (
+                  <IdealWeek userId={userId} onHasUnsavedChanges={handleIdealUnsavedChanges} />
+                )}
               </div>
             </div>
           </div>
