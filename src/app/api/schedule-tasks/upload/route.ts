@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db/sqliteService';
 import { getNotionDatabasesDb } from '@/lib/db/notionDatabaseService';
 import { createCalendarEvent } from '@/lib/googleCalendar';
+import { getBaseUrl } from '@/lib/utils';
+import { CalendarEvent } from '@/lib/types';
 
 // Define interface for calendar events
 interface CalendarEventData {
@@ -108,136 +110,65 @@ async function addEventToCalendar(userId: string, event: CalendarEventData): Pro
 
 export async function POST(request: NextRequest) {
   try {
-    // Parse the request body
-    const body = await request.json();
-    const { userId, events } = body;
-    
-    // Validate input
-    if (!userId || !events || !Array.isArray(events) || events.length === 0) {
-      return NextResponse.json(
-        { error: 'Invalid request. userId and events array are required' },
-        { status: 400 }
-      );
+    const { userId, events } = await request.json();
+
+    if (!userId) {
+      return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
     }
-    
-    // Initialize database
-    const db = initializeDatabase();
-    
-    // Create a map to store events by their schedule source
-    const eventsBySource: Record<string, CalendarEventData[]> = {};
-    
-    // Group events by schedule source
+
+    if (!events || !Array.isArray(events) || events.length === 0) {
+      return NextResponse.json({ error: 'Events array is required and cannot be empty' }, { status: 400 });
+    }
+
+    console.log(`📅 UPLOAD: Received ${events.length} events to upload`);
+
+    // Process each event and create it in Google Calendar
+    let successCount = 0;
+    let failCount = 0;
+    const baseUrl = getBaseUrl();
+
     for (const event of events) {
-      // Extract source from the event description or use a default
-      let scheduleSource = 'unknown';
-      
-      if (event.description) {
-        // Try to extract the source from description
-        const sourceMatch = event.description.match(/Source: (ideal-week|this-week)/i);
-        if (sourceMatch && sourceMatch[1]) {
-          scheduleSource = sourceMatch[1].toLowerCase();
+      try {
+        // Create the event via the calendar events API
+        const response = await fetch(`${baseUrl}/api/calendar/events`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            summary: event.summary,
+            description: event.description,
+            startDateTime: event.start.dateTime,
+            endDateTime: event.end.dateTime,
+            timeZone: event.start.timeZone || 'UTC',
+            colorId: event.colorId
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error(`📅 UPLOAD: Failed to create event: ${errorData.error || response.statusText}`);
+          failCount++;
+          continue;
         }
-      }
-      
-      // Add to map
-      if (!eventsBySource[scheduleSource]) {
-        eventsBySource[scheduleSource] = [];
-      }
-      eventsBySource[scheduleSource].push(event);
-    }
-    
-    // Track overall results
-    let totalUploaded = 0;
-    const allEventIds: string[] = [];
-    let startDate = '';
-    let endDate = '';
-    
-    // Default schedule source if none is found in events
-    const defaultScheduleSource = events[0]?.description?.includes('Ideal Week') ? 'ideal-week' : 'this-week';
-    
-    // Process all events
-    for (const [scheduleSource, sourceEvents] of Object.entries(eventsBySource)) {
-      const uploadedEvents: CalendarEventData[] = [];
-      
-      // Upload each event to Google Calendar
-      for (const event of sourceEvents) {
-        try {
-          // Skip events marked as temporary
-          if (event.isTemp) {
-            const { isTemp, ...eventWithoutTemp } = event;
-            const uploadedEvent = await addEventToCalendar(userId, eventWithoutTemp);
-            
-            if (uploadedEvent && uploadedEvent.id) {
-              uploadedEvents.push(uploadedEvent);
-              allEventIds.push(uploadedEvent.id);
-              
-              // Update date range
-              if (!startDate || new Date(event.start.dateTime) < new Date(startDate)) {
-                startDate = event.start.dateTime;
-              }
-              
-              if (!endDate || new Date(event.end.dateTime) > new Date(endDate)) {
-                endDate = event.end.dateTime;
-              }
-            }
-          } else {
-            // Event is already uploaded, just keep track of it
-            if (event.id) {
-              allEventIds.push(event.id);
-              
-              // Update date range
-              if (!startDate || new Date(event.start.dateTime) < new Date(startDate)) {
-                startDate = event.start.dateTime;
-              }
-              
-              if (!endDate || new Date(event.end.dateTime) > new Date(endDate)) {
-                endDate = event.end.dateTime;
-              }
-            }
-          }
-        } catch (error) {
-          console.error(`Error uploading event "${event.summary}":`, error);
-          // Continue with the next event
-        }
-      }
-      
-      totalUploaded += uploadedEvents.length;
-      
-      // Record this batch of uploads in the database
-      if (uploadedEvents.length > 0) {
-        try {
-          // Insert scheduling result
-          const stmt = db.prepare(`
-            INSERT INTO scheduling_results 
-            (userId, scheduleSource, eventIds, startDate, endDate, tasksScheduled)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `);
-          
-          stmt.run(
-            userId,
-            scheduleSource || defaultScheduleSource,
-            JSON.stringify(uploadedEvents.map(e => e.id)),
-            startDate,
-            endDate,
-            uploadedEvents.length
-          );
-        } catch (dbError) {
-          console.error('Error recording scheduling results:', dbError);
-          // Continue anyway, this is just for tracking
-        }
+
+        successCount++;
+      } catch (error) {
+        console.error(`📅 UPLOAD: Error processing event:`, error);
+        failCount++;
       }
     }
-    
-    // Return success
+
     return NextResponse.json({
       success: true,
-      totalUploaded,
-      eventIds: allEventIds
+      totalUploaded: successCount,
+      failedUploads: failCount,
+      totalEvents: events.length
     });
-  } catch (error) {
-    console.error('Error in schedule upload:', error);
+  } catch (error: any) {
+    console.error('Error in schedule-tasks/upload:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Unknown error occurred' },
+      { error: `Failed to upload task schedule: ${error.message}` },
       { status: 500 }
     );
   }

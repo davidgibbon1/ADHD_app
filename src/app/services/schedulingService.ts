@@ -346,7 +346,7 @@ function convertTaskRowsToSchedulable(
       metadata: {
         duration: row.duration,
         priority: row.priority as 'high' | 'medium' | 'low' | undefined,
-        energy: row.energy as 'high' | 'medium' | 'high' | undefined,
+        energy: row.energy as 'high' | 'medium' | 'low' | undefined,
         dueDate: row.dueDate || undefined,
         category: row.category || undefined,
         notes: row.notes || undefined
@@ -717,328 +717,357 @@ function isTimeSlotMatchingDatabase(slot: TimeSlot, task: SchedulableTask): bool
   return taskDatabaseId === slot.databaseId;
 }
 
-// Schedule tasks based on priority and available time slots
-export async function scheduleTasks(
-  userId: string,
-  database: NotionDatabase,
-  startDate: Date,
-  endDate: Date,
-  existingEvents: CalendarEvent[],
-  rules: SchedulingRules = getDefaultRules(),
-  prefetchedTasks?: SchedulableTask[]
-): Promise<CalendarEvent[]> {
+// Import existing calendar function to use the same method
+export async function fetchCalendarEvents(userId: string, startDate: Date, endDate: Date): Promise<CalendarEvent[]> {
+  const baseUrl = getBaseUrl();
+  
   try {
-    console.log(`🔍 SCHEDULING: Starting task scheduling for ${database.name}, dates: ${startDate.toISOString()} - ${endDate.toISOString()}`);
-    console.log(`🔍 SCHEDULING: Using database ID: ${database.id}, Notion database ID: ${database.notionDatabaseId || 'none'}`);
-    console.log(`🔍 SCHEDULING: Rules:`, JSON.stringify({
-      maxTaskDuration: rules.maxTaskDuration,
-      maxLongTaskDuration: rules.maxLongTaskDuration,
-      priorityWeight: rules.priorityWeight,
-      workingDays: rules.workingDays,
-      timeBlocks: rules.timeBlocks.length
-    }));
-    
-    // Use pre-fetched tasks if provided, otherwise fetch tasks
-    let tasks: SchedulableTask[];
-    if (prefetchedTasks && prefetchedTasks.length > 0) {
-      console.log(`🔍 SCHEDULING: Using ${prefetchedTasks.length} pre-fetched tasks`);
-      tasks = prefetchedTasks;
-    } else {
-      // Fetch tasks using the updated method that handles ideal-week and this-week specially
-      console.log("🔍 SCHEDULING: No pre-fetched tasks, fetching tasks directly...");
-      tasks = await fetchTasksForScheduling(database, existingEvents, rules);
+    const response = await fetch(
+      `${baseUrl}/api/calendar/events?userId=${encodeURIComponent(userId)}&start=${encodeURIComponent(startDate.toISOString())}&end=${encodeURIComponent(endDate.toISOString())}`,
+      {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch calendar events: ${response.statusText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching calendar events:', error);
+    throw error;
+  }
+}
+
+// Modify the scheduleTasks function to use the same event fetching approach
+export async function scheduleTasks(
+  userId: string, 
+  startDate: Date, 
+  scheduleSource: string,
+  daysAhead: number = 7,
+  existingEvents: CalendarEvent[] = []
+): Promise<CalendarEvent[]> {
+  console.log("🔄 SCHEDULING: Starting task scheduling with:", { 
+    userId, 
+    startDate: startDate.toISOString(), 
+    scheduleSource,
+    daysAhead 
+  });
+  
+  try {
+    // If no existing events were provided, fetch them the same way the calendar view does
+    let calendarEvents = existingEvents;
+    if (calendarEvents.length === 0) {
+      const endDate = addDays(startDate, daysAhead);
+      console.log("🔄 SCHEDULING: Fetching calendar events from API");
+      
+      try {
+        calendarEvents = await fetchCalendarEvents(userId, startDate, endDate);
+        console.log(`🔄 SCHEDULING: Fetched ${calendarEvents.length} existing calendar events`);
+      } catch (error) {
+        console.error("🔄 SCHEDULING: Error fetching calendar events:", error);
+        // Continue with empty events array if fetch fails
+        calendarEvents = [];
+      }
     }
     
-    console.log(`🔍 SCHEDULING: Using ${tasks.length} tasks for scheduling`);
+    // Fetch time blocks based on schedule source
+    const isIdealWeek = scheduleSource === 'ideal-week';
+    console.log(`🔄 SCHEDULING: Fetching ${isIdealWeek ? 'ideal week' : 'this week'} time blocks`);
     
-    if (tasks.length === 0) {
-      console.log("🔍 SCHEDULING: No tasks available to schedule. Check if the Notion database has tasks in it.");
+    const baseUrl = getBaseUrl();
+    const timeBlocksResponse = await fetch(
+      `${baseUrl}/api/time-blocks?userId=${encodeURIComponent(userId)}&isIdealWeek=${isIdealWeek}`,
+      {
+        method: 'GET',
+        headers: { 
+          'Content-Type': 'application/json' 
+        }
+      }
+    );
+    
+    if (!timeBlocksResponse.ok) {
+      throw new Error(`Failed to fetch time blocks: ${timeBlocksResponse.statusText}`);
+    }
+    
+    // Parse response and ensure timeBlocks is always an array
+    const timeBlocksData = await timeBlocksResponse.json();
+    const timeBlocks = Array.isArray(timeBlocksData) ? timeBlocksData : [];
+    
+    console.log(`🔄 SCHEDULING: Found ${timeBlocks.length} time blocks`);
+    
+    // Debug time blocks database associations
+    const timeBlockDbMap: Record<string, number> = {};
+    timeBlocks.forEach((block: any, index: number) => {
+      if (index < 10) { // Only log the first 10 to avoid spam
+        console.log(`🔄 SCHEDULING: Time block ${block.id || index}: day=${block.day}, time=${block.startTime}-${block.endTime}, databaseId=${block.databaseId || 'NONE'}`);
+      }
+      
+      // Count blocks by database
+      if (block.databaseId) {
+        timeBlockDbMap[block.databaseId] = (timeBlockDbMap[block.databaseId] || 0) + 1;
+      } else {
+        timeBlockDbMap['unassigned'] = (timeBlockDbMap['unassigned'] || 0) + 1;
+      }
+    });
+    
+    console.log('🔄 SCHEDULING: Time blocks by database ID:', timeBlockDbMap);
+
+    if (timeBlocks.length === 0) {
+      console.log("🔄 SCHEDULING: No time blocks found for scheduling");
       return [];
     }
     
-    // Calculate scores for each task
-    const scoredTasks = tasks.map(task => ({
-      ...task,
-      score: calculateTaskScore(task, rules)
-    }));
+    // Fetch databases to get color and other info
+    const databasesResponse = await fetch(
+      `${baseUrl}/api/notion-databases?userId=${encodeURIComponent(userId)}`,
+      {
+        method: 'GET',
+        headers: { 
+          'Content-Type': 'application/json' 
+        }
+      }
+    );
     
-    console.log(`🔍 SCHEDULING: Scored ${scoredTasks.length} tasks by priority and other factors`);
-    
-    // Sort tasks by score (highest first)
-    const sortedTasks = scoredTasks.sort((a, b) => (b.score || 0) - (a.score || 0));
-    
-    // Generate available time slots with existing events already handled
-    console.log("🔍 SCHEDULING: Generating available time slots...");
-    console.log("🔍 SCHEDULING: Rules workingDays:", JSON.stringify(rules.workingDays));
-    console.log("🔍 SCHEDULING: Rules timeBlocks:", JSON.stringify(rules.timeBlocks.map(tb => ({
-      day: tb.day, 
-      start: tb.startTime, 
-      end: tb.endTime,
-      enabled: tb.enabled,
-      databaseId: tb.databaseId || 'none'
-    }))));
-    
-    let availableSlots = generateTimeSlots(startDate, endDate, rules, existingEvents);
-    console.log(`🔍 SCHEDULING: Generated ${availableSlots.length} available time slots`);
-    
-    if (availableSlots.length === 0) {
-      console.log("🔍 SCHEDULING: No available time slots. Check working days and time blocks configuration.");
-      return [];
+    if (!databasesResponse.ok) {
+      throw new Error(`Failed to fetch databases: ${databasesResponse.statusText}`);
     }
     
-    // Schedule each task
+    const databases = await databasesResponse.json();
+    console.log(`🔄 SCHEDULING: Found ${databases.length} databases`);
+    
+    // Fetch tasks from each database referenced in the time blocks
+    console.log("🔄 SCHEDULING: Fetching tasks");
+    
+    // Safely extract database IDs - ensure we're working with an array and check for undefined
+    const databaseIds = Array.from(
+      new Set(
+        timeBlocks
+          .map((block: any) => block.databaseId)
+          .filter((id: string | undefined) => id !== undefined && id !== '')
+      )
+    );
+    
+    console.log(`🔄 SCHEDULING: Found ${databaseIds.length} unique database IDs in time blocks`);
+    
+    const tasksResponse = await fetch(
+      `${baseUrl}/api/tasks?userId=${encodeURIComponent(userId)}`,
+      {
+        method: 'GET',
+        headers: { 
+          'Content-Type': 'application/json' 
+        }
+      }
+    );
+    
+    if (!tasksResponse.ok) {
+      throw new Error(`Failed to fetch tasks: ${tasksResponse.statusText}`);
+    }
+    
+    const allTasks = await tasksResponse.json();
+    console.log(`🔄 SCHEDULING: Found ${allTasks.length} total tasks`);
+    
+    // Associate tasks with their databases and create events
     const scheduledEvents: CalendarEvent[] = [];
     
-    console.log("🔍 SCHEDULING: Scheduling individual tasks...");
-    for (const task of sortedTasks) {
-      console.log(`🔍 SCHEDULING: Processing task: ${task.title} (score: ${task.score?.toFixed(2) || 'unscored'})`);
-      console.log(`🔍 SCHEDULING: Task database ID: ${task.notionDatabaseId || 'unknown'}`);
-      
-      // Determine total required duration for this task
-      let requiredDuration = task.estimatedDuration || 30;
-      console.log(`🔍 SCHEDULING: Task ${task.title} requires ${requiredDuration} minutes`);
-      
-      // Filter slots by database association
-      let appropriateSlots = availableSlots
-        .filter(slot => {
-          // If the slot has no database ID, it can be used for any task
-          if (!slot.databaseId || slot.databaseId === '') {
-            return true;
-          }
-          
-          // If the task has a database ID, it must match the slot's database ID
-          return slot.databaseId === task.notionDatabaseId;
-        })
-        .sort((a, b) => {
-          // Sort by day first, then by start time
-          const dayDiff = a.day.getTime() - b.day.getTime();
-          if (dayDiff !== 0) return dayDiff;
-          
-          // If same day, sort by start time
-          const [aHour, aMin] = a.startTime.split(':').map(Number);
-          const [bHour, bMin] = b.startTime.split(':').map(Number);
-          
-          const aMinutes = aHour * 60 + aMin;
-          const bMinutes = bHour * 60 + bMin;
-          return aMinutes - bMinutes;
-        });
-      
-      console.log(`🔍 SCHEDULING: Found ${appropriateSlots.length} appropriate slots for task ${task.id}`);
-      
-      if (appropriateSlots.length === 0) {
-        console.log(`🔍 SCHEDULING: No appropriate slots found for task ${task.id} - skipping`);
+    // Process each time block
+    for (const timeBlock of timeBlocks) {
+      // Skip disabled time blocks
+      if (!timeBlock.enabled) {
+        console.log(`🔄 SCHEDULING: Skipping disabled time block: ${timeBlock.id}`);
         continue;
       }
       
-      // Try to schedule the entire task in one slot if possible
-      const suitableFullSlots = appropriateSlots.filter(slot => slot.durationMinutes >= requiredDuration);
+      console.log(`🔄 SCHEDULING: Processing time block:`, timeBlock);
       
-      if (suitableFullSlots.length > 0) {
-        // Schedule the task in a single slot
-        const selectedSlot = suitableFullSlots[0];
+      // Check if database ID is specified
+      if (!timeBlock.databaseId) {
+        console.log(`🔄 SCHEDULING: ERROR - No database ID specified for time block ${timeBlock.id}. Each time block must have a database association.`);
+        continue;
+      }
+      
+      // Find the database for this time block
+      const database = databases.find((db: any) => db.id === timeBlock.databaseId);
+      if (!database) {
+        console.log(`🔄 SCHEDULING: ERROR - Database with ID ${timeBlock.databaseId} not found. Make sure the database exists and is active.`);
+        continue;
+      }
+      
+      // Filter tasks for this specific database
+      const tasksForThisBlock = allTasks.filter((task: any) => {
+        // Log task database info for debugging (only for the first few tasks to avoid log spam)
+        if (allTasks.indexOf(task) < 5) {
+          console.log(`🔄 SCHEDULING: Task DB debug - Task: ${task.title}, notionDatabaseId: ${task.notionDatabaseId}, database_id: ${task.database_id}, source: ${task.source}`);
+        }
         
-        // Calculate start and end times
-        const [startHour, startMinute] = selectedSlot.startTime.split(':').map(Number);
-        const startDateTime = setMinutes(setHours(new Date(selectedSlot.day), startHour), startMinute);
+        // Check for exact matches first
+        const exactMatch = task.notionDatabaseId === database.id || 
+          task.database_id === database.id ||
+          task.source === database.id;
         
-        const endDateTime = new Date(startDateTime);
-        endDateTime.setMinutes(endDateTime.getMinutes() + requiredDuration);
+        if (exactMatch) return true;
         
-        console.log(`🔍 SCHEDULING: Scheduling task "${task.title}" at ${startDateTime.toISOString()} for ${requiredDuration} minutes`);
+        // If database has a notionDatabaseId, check that too
+        if (database.notionDatabaseId && 
+           (task.notionDatabaseId === database.notionDatabaseId || 
+            task.database_id === database.notionDatabaseId || 
+            task.source === database.notionDatabaseId)) {
+          console.log(`🔄 SCHEDULING: Found task ${task.title} via notionDatabaseId match`);
+          return true;
+        }
         
-        // Create calendar event
-        const event: CalendarEvent = {
-          id: `scheduled-${task.id}-${Date.now()}`,
-          summary: task.title,
-          description: `Task from ${task.notionDatabaseName || 'Unknown'}: ${task.title}\nPriority: ${task.metadata?.priority || 'low'}\nSource: ${database.id === 'ideal-week' ? 'Ideal Week' : 'This Week'}\nTask ID: ${task.id}`,
-          start: {
-            dateTime: startDateTime.toISOString(),
-            timeZone: 'UTC',
-          },
-          end: {
-            dateTime: endDateTime.toISOString(),
-            timeZone: 'UTC',
-          },
-          // Add some color based on priority
-          colorId: task.metadata?.priority === 'high' ? '4' : task.metadata?.priority === 'medium' ? '5' : '6',
-        };
+        // For databases without tasks, log this info
+        return false;
+      });
+      
+      console.log(`🔄 SCHEDULING: Found ${tasksForThisBlock.length} tasks for database ${database.name} (ID: ${database.id}, notionDatabaseId: ${database.notionDatabaseId || 'none'})`);
+      
+      if (tasksForThisBlock.length === 0) {
+        console.log(`🔄 SCHEDULING: WARNING - No tasks found for database ${database.name}. Database details:`, { 
+          id: database.id, 
+          notionDatabaseId: database.notionDatabaseId || 'none',
+          name: database.name,
+          isActive: database.isActive 
+        });
+        continue;
+      }
+
+      // Calculate time slot based on time block
+      // Make sure we have all the required properties
+      const dayOfWeek = timeBlock.dayOfWeek || parseInt(timeBlock.day) || new Date().getDay();
+      const startHour = timeBlock.startHour || parseInt(timeBlock.startTime?.split(':')[0]) || 9;
+      const startMinute = timeBlock.startMinute || parseInt(timeBlock.startTime?.split(':')[1]) || 0;
+      const endHour = timeBlock.endHour || parseInt(timeBlock.endTime?.split(':')[0]) || 17;
+      const endMinute = timeBlock.endMinute || parseInt(timeBlock.endTime?.split(':')[1]) || 0;
+      
+      // Log the extracted time values for debugging
+      console.log(`🔄 SCHEDULING: Extracted time values - day: ${dayOfWeek}, hours: ${startHour}:${startMinute} - ${endHour}:${endMinute}`);
+
+      const slotStartDate = new Date();
+      slotStartDate.setDate(slotStartDate.getDate() + ((dayOfWeek - slotStartDate.getDay() + 7) % 7));
+      slotStartDate.setHours(startHour, startMinute, 0, 0);
+      
+      const slotEndDate = new Date(slotStartDate);
+      slotEndDate.setHours(endHour, endMinute, 0, 0);
+      
+      console.log(`🔄 SCHEDULING: Time slot: ${slotStartDate.toISOString()} to ${slotEndDate.toISOString()}`);
+      
+      // Check for conflicts with existing calendar events
+      const conflictingEvents = calendarEvents.filter(event => {
+        const eventStart = new Date(event.start.dateTime);
+        const eventEnd = new Date(event.end.dateTime);
         
-        scheduledEvents.push(event);
+        return (
+          (eventStart < slotEndDate && eventEnd > slotStartDate) || // Overlaps
+          (eventStart >= slotStartDate && eventEnd <= slotEndDate) // Contained within
+        );
+      });
+      
+      console.log(`🔄 SCHEDULING: Found ${conflictingEvents.length} conflicting events`);
+      
+      // If there are conflicts, adjust the time slot
+      let availableSlots = [{start: slotStartDate, end: slotEndDate}];
+      
+      if (conflictingEvents.length > 0) {
+        // Sort conflicting events by start time
+        conflictingEvents.sort((a, b) => 
+          new Date(a.start.dateTime).getTime() - new Date(b.start.dateTime).getTime()
+        );
         
-        // Remove the allocated time from available slots by updating the slot if partial, or removing if fully used
-        const slotStartMinutes = startHour * 60 + startMinute;
-        const eventEndMinutes = endDateTime.getHours() * 60 + endDateTime.getMinutes();
-        const slotEndHour = parseInt(selectedSlot.endTime.split(':')[0]);
-        const slotEndMinute = parseInt(selectedSlot.endTime.split(':')[1]);
-        const slotEndMinutes = slotEndHour * 60 + slotEndMinute;
+        // Recalculate available slots by removing conflicting times
+        availableSlots = [];
+        let currentStart = slotStartDate;
         
-        // If we used the entire slot, remove it
-        if (slotStartMinutes === slotStartMinutes && eventEndMinutes === slotEndMinutes) {
-          availableSlots = availableSlots.filter(s => s !== selectedSlot);
-        } else {
-          // If we only used part of the slot, update it
-          const newStartTime = `${endDateTime.getHours().toString().padStart(2, '0')}:${endDateTime.getMinutes().toString().padStart(2, '0')}`;
-          const newDuration = slotEndMinutes - eventEndMinutes;
+        for (const event of conflictingEvents) {
+          const eventStart = new Date(event.start.dateTime);
+          const eventEnd = new Date(event.end.dateTime);
           
-          // Remove the original slot
-          availableSlots = availableSlots.filter(s => s !== selectedSlot);
-          
-          // Add the updated slot if there's still time left
-          if (newDuration >= 15) {
+          // If event starts after current start, we have an available slot
+          if (eventStart > currentStart) {
             availableSlots.push({
-              day: selectedSlot.day,
-              startTime: newStartTime,
-              endTime: selectedSlot.endTime,
-              durationMinutes: newDuration,
-              databaseId: selectedSlot.databaseId
+              start: currentStart,
+              end: eventStart
             });
           }
+          
+          // Move current start to after this event
+          if (eventEnd > currentStart) {
+            currentStart = eventEnd;
+          }
         }
-      } else {
-        // If no single slot can fit the entire task, try to split it
-        console.log(`🔍 SCHEDULING: No slot can fit entire task duration (${requiredDuration} min), trying to split`);
         
-        // Only allow splitting for tasks > 60 minutes
-        if (requiredDuration > 60) {
-          let remainingDuration = requiredDuration;
-          let taskPart = 1;
+        // Add final slot if needed
+        if (currentStart < slotEndDate) {
+          availableSlots.push({
+            start: currentStart,
+            end: slotEndDate
+          });
+        }
+        
+        console.log(`🔄 SCHEDULING: After conflicts, have ${availableSlots.length} available slots`);
+      }
+      
+      // If we have available slots, schedule tasks within them
+      if (availableSlots.length > 0) {
+        for (const slot of availableSlots) {
+          // Calculate slot duration in minutes
+          const slotDuration = (slot.end.getTime() - slot.start.getTime()) / (1000 * 60);
           
-          // Try to schedule the task in multiple parts
-          while (remainingDuration > 0 && appropriateSlots.length > 0) {
-            // Find the largest available slot that can fit in our time frame
-            const largestSlot = appropriateSlots.reduce((max, slot) => 
-              slot.durationMinutes > max.durationMinutes ? slot : max, appropriateSlots[0]);
-            
-            // Calculate how much of the task to schedule (use entire slot or cap at 60 min)
-            const partDuration = Math.min(largestSlot.durationMinutes, 60, remainingDuration);
-            
-            // Calculate start and end times
-            const [startHour, startMinute] = largestSlot.startTime.split(':').map(Number);
-            const startDateTime = setMinutes(setHours(new Date(largestSlot.day), startHour), startMinute);
-            
-            const endDateTime = new Date(startDateTime);
-            endDateTime.setMinutes(endDateTime.getMinutes() + partDuration);
-            
-            console.log(`🔍 SCHEDULING: Scheduling task "${task.title}" (part ${taskPart}) at ${startDateTime.toISOString()} for ${partDuration} minutes`);
-            
-            // Create calendar event
-            const event: CalendarEvent = {
-              id: `scheduled-${task.id}-part${taskPart}-${Date.now()}`,
-              summary: `${task.title} (${taskPart})`,
-              description: `Task from ${task.notionDatabaseName || 'Unknown'}: ${task.title} (Part ${taskPart})\nPriority: ${task.metadata?.priority || 'low'}\nSource: ${database.id === 'ideal-week' ? 'Ideal Week' : 'This Week'}\nTask ID: ${task.id}`,
-              start: {
-                dateTime: startDateTime.toISOString(),
-                timeZone: 'UTC',
-              },
-              end: {
-                dateTime: endDateTime.toISOString(),
-                timeZone: 'UTC',
-              },
-              // Add some color based on priority
-              colorId: task.metadata?.priority === 'high' ? '4' : task.metadata?.priority === 'medium' ? '5' : '6',
-            };
-            
-            scheduledEvents.push(event);
-            
-            // Update remaining duration
-            remainingDuration -= partDuration;
-            taskPart++;
-            
-            // Remove or update the used slot
-            const slotStartMinutes = startHour * 60 + startMinute;
-            const eventEndMinutes = endDateTime.getHours() * 60 + endDateTime.getMinutes();
-            const slotEndHour = parseInt(largestSlot.endTime.split(':')[0]);
-            const slotEndMinute = parseInt(largestSlot.endTime.split(':')[1]);
-            const slotEndMinutes = slotEndHour * 60 + slotEndMinute;
-            
-            // If we used the entire slot, remove it
-            if (eventEndMinutes >= slotEndMinutes) {
-              availableSlots = availableSlots.filter(s => s !== largestSlot);
-              appropriateSlots = appropriateSlots.filter(s => s !== largestSlot);
-            } else {
-              // If we only used part of the slot, update it
-              const newStartTime = `${endDateTime.getHours().toString().padStart(2, '0')}:${endDateTime.getMinutes().toString().padStart(2, '0')}`;
-              const newDuration = slotEndMinutes - eventEndMinutes;
-              
-              // Remove the original slot
-              availableSlots = availableSlots.filter(s => s !== largestSlot);
-              appropriateSlots = appropriateSlots.filter(s => s !== largestSlot);
-              
-              // Add the updated slot if there's still time left
-              if (newDuration >= 15) {
-                const updatedSlot = {
-                  day: largestSlot.day,
-                  startTime: newStartTime,
-                  endTime: largestSlot.endTime,
-                  durationMinutes: newDuration,
-                  databaseId: largestSlot.databaseId
-                };
-                availableSlots.push(updatedSlot);
-                appropriateSlots.push(updatedSlot);
-              }
-            }
+          // If slot is too short, skip it
+          if (slotDuration < 15) {
+            console.log(`🔄 SCHEDULING: Skipping slot that's too short: ${slotDuration} minutes`);
+            continue;
           }
           
-          if (remainingDuration > 0) {
-            console.log(`🔍 SCHEDULING: Could only schedule ${requiredDuration - remainingDuration} minutes out of ${requiredDuration} minutes for task "${task.title}"`);
-          } else {
-            console.log(`🔍 SCHEDULING: Successfully scheduled all ${requiredDuration} minutes for task "${task.title}" in ${taskPart - 1} parts`);
-          }
-        } else {
-          // For tasks under 60 minutes that don't fit in any slot, try to find the largest available slot
-          const largestSlot = appropriateSlots.reduce((max, slot) => 
-            slot.durationMinutes > max.durationMinutes ? slot : max, appropriateSlots[0]);
+          console.log(`🔄 SCHEDULING: Processing slot of ${slotDuration} minutes`);
           
-          // If there's at least 15 minutes available, schedule what we can
-          if (largestSlot.durationMinutes >= 15) {
-            const partDuration = largestSlot.durationMinutes;
-            
-            // Calculate start and end times
-            const [startHour, startMinute] = largestSlot.startTime.split(':').map(Number);
-            const startDateTime = setMinutes(setHours(new Date(largestSlot.day), startHour), startMinute);
-            
-            const endDateTime = new Date(startDateTime);
-            endDateTime.setMinutes(endDateTime.getMinutes() + partDuration);
-            
-            console.log(`🔍 SCHEDULING: Scheduling truncated task "${task.title}" at ${startDateTime.toISOString()} for ${partDuration} minutes (requested ${requiredDuration})`);
-            
-            // Create calendar event
-            const event: CalendarEvent = {
-              id: `scheduled-${task.id}-partial-${Date.now()}`,
-              summary: `${task.title} (Partial)`,
-              description: `Task from ${task.notionDatabaseName || 'Unknown'}: ${task.title} (Partial scheduling - requested ${requiredDuration} min)\nPriority: ${task.metadata?.priority || 'low'}\nSource: ${database.id === 'ideal-week' ? 'Ideal Week' : 'This Week'}\nTask ID: ${task.id}`,
-              start: {
-                dateTime: startDateTime.toISOString(),
-                timeZone: 'UTC',
-              },
-              end: {
-                dateTime: endDateTime.toISOString(),
-                timeZone: 'UTC',
-              },
-              // Add some color based on priority
-              colorId: task.metadata?.priority === 'high' ? '4' : task.metadata?.priority === 'medium' ? '5' : '6',
-            };
-            
-            scheduledEvents.push(event);
-            
-            // Remove the used slot
-            availableSlots = availableSlots.filter(s => s !== largestSlot);
-          } else {
-            console.log(`🔍 SCHEDULING: No suitable slots available for task "${task.title}"`);
+          // Select a task to schedule in this slot
+          const task = tasksForThisBlock.shift(); // Take the first available task
+          
+          if (!task) {
+            console.log(`🔄 SCHEDULING: No more tasks available for this time block`);
+            break;
           }
+          
+          console.log(`🔄 SCHEDULING: Scheduling task: ${task.title}`);
+          
+          // Get the color from database or use a default
+          const colorId = database?.color || '1';
+          
+          // Create a calendar event for this task
+          const event: CalendarEvent = {
+            id: `scheduled-${task.id}-${Date.now()}`,
+            summary: task.title,
+            description: `Task${database ? ` from ${database.name}` : ''}: ${task.title}
+Source: ${scheduleSource}
+Task ID: ${task.id}
+${database ? `Database ID: ${database.id}` : ''}`,
+            start: {
+              dateTime: slot.start.toISOString(),
+              timeZone: 'UTC'
+            },
+            end: {
+              dateTime: slot.end.toISOString(),
+              timeZone: 'UTC'
+            },
+            colorId: colorId
+          };
+          
+          scheduledEvents.push(event);
+          console.log(`🔄 SCHEDULING: Added event for task: ${task.title}`);
         }
       }
     }
     
-    console.log(`🔍 SCHEDULING: Successfully scheduled ${scheduledEvents.length} events`);
-    
-    if (scheduledEvents.length === 0) {
-      console.log("🔍 SCHEDULING: No events could be scheduled. This could be due to task constraints or limited available time slots.");
-    }
-    
+    console.log(`🔄 SCHEDULING: Generated ${scheduledEvents.length} scheduled events`);
     return scheduledEvents;
+    
   } catch (error) {
-    console.error('🔍 SCHEDULING: Error scheduling tasks:', error);
+    console.error("🔄 SCHEDULING: Error in schedule tasks:", error);
     throw error;
   }
 } 

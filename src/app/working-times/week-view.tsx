@@ -367,8 +367,8 @@ export default function WeekView({ userId, onHasUnsavedChanges }: WeekViewProps)
       
       if (response.ok) {
         const data = await response.json();
-        setTimeBlocks(data.timeBlocks || []);
-        setOriginalTimeBlocks(JSON.parse(JSON.stringify(data.timeBlocks || [])));
+        setTimeBlocks(data || []);
+        setOriginalTimeBlocks(JSON.parse(JSON.stringify(data || [])));
         setHasUnsavedChanges(false);
         onHasUnsavedChanges(false);
       } else {
