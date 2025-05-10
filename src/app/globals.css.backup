@@ -1,0 +1,277 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 10%;
+    --foreground: 0 0% 98%;
+ 
+    --card: 0 0% 10%;
+    --card-foreground: 0 0% 98%;
+ 
+    --popover: 0 0% 10%;
+    --popover-foreground: 0 0% 98%;
+ 
+    --primary: 267 100% 67%;
+    --primary-foreground: 0 0% 100%;
+ 
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 98%;
+ 
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 65%;
+ 
+    --accent: 267 100% 67%;
+    --accent-foreground: 0 0% 100%;
+ 
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+ 
+    --border: 214.3 31.8% 91.4%;
+    --input: 0 0% 15%;
+    --ring: 267 100% 67%;
+ 
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .glass-effect {
+    @apply bg-white/5 backdrop-blur-lg border border-white/10;
+  }
+
+  .sidebar-button {
+    @apply relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-all duration-200 ease-in-out;
+    @apply text-white/80 hover:bg-white/5 hover:text-white;
+    @apply active:scale-95;
+  }
+
+  .focus-ring {
+    @apply outline-none ring-offset-2 ring-offset-background focus-visible:ring-2 focus-visible:ring-ring;
+  }
+
+  .task-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    padding: 1rem;
+  }
+
+  .hover-card {
+    @apply transition-all duration-200;
+  }
+  
+  .hover-card:hover {
+    @apply transform -translate-y-0.5 shadow-lg shadow-black/5;
+  }
+}
+
+@layer utilities {
+  .animate-gradient {
+    background: linear-gradient(
+      -45deg,
+      rgb(126, 34, 206),
+      rgb(147, 51, 234),
+      rgb(168, 85, 247),
+      rgb(126, 34, 206)
+    );
+    background-size: 400% 400%;
+    animation: gradient 15s ease infinite;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Notion-style calendar */
+.rdp {
+  --rdp-cell-size: 40px;
+  --rdp-accent-color: rgb(147, 51, 234);
+  --rdp-background-color: rgba(147, 51, 234, 0.2);
+  --rdp-accent-color-dark: rgb(168, 85, 247);
+  --rdp-background-color-dark: rgba(168, 85, 247, 0.2);
+  --rdp-outline: 2px solid rgb(147, 51, 234);
+  --rdp-outline-selected: 2px solid rgb(168, 85, 247);
+}
+
+.rdp-custom {
+  margin: 0;
+}
+
+.rdp-custom .rdp-months {
+  justify-content: center;
+}
+
+.rdp-custom .rdp-month {
+  background-color: transparent;
+}
+
+.rdp-custom .rdp-day {
+  color: white;
+  opacity: 0.8;
+}
+
+.rdp-custom .rdp-day_selected {
+  background-color: var(--rdp-accent-color);
+  opacity: 1;
+}
+
+.rdp-custom .rdp-day_today {
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.rdp-custom .rdp-button:hover:not([disabled]):not(.rdp-day_selected) {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.rdp-custom .rdp-head_cell {
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+  font-size: 0.875rem;
+}
+
+.rdp-custom .rdp-nav_button {
+  color: white;
+}
+
+.rdp-custom .rdp-caption_label {
+  color: white;
+  font-weight: 600;
+}
+
+/* Animation keyframes */
+@keyframes gradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Notion-style transitions */
+.transition-notion {
+  transition: all 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Fix for time inputs in dark mode */
+input[type="time"] {
+  color-scheme: dark;
+}
+
+/* Custom styles for the Notion-like UI */
+.notion-page-content {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.notion-block {
+  margin-bottom: 0.5rem;
+}
+
+.notion-h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+
+.notion-h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.notion-h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.notion-text {
+  line-height: 1.5;
+  margin-bottom: 0.5rem;
+}
+
+.notion-list-item {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 0.25rem;
+}
+
+.notion-list-item:before {
+  content: "•";
+  margin-right: 0.5rem;
+}
+
+.notion-quote {
+  border-left: 3px solid rgba(255, 255, 255, 0.2);
+  padding-left: 1rem;
+  margin: 1rem 0;
+  color: rgba(255, 255, 255, 0.8);
+  font-style: italic;
+}
+
+.notion-callout {
+  display: flex;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  background-color: rgba(255, 255, 255, 0.05);
+  margin: 1rem 0;
+}
+
+.notion-callout-icon {
+  margin-right: 0.75rem;
+}
+
+.notion-toggle {
+  margin: 0.5rem 0;
+}
+
+.notion-toggle-summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.notion-toggle-summary:before {
+  content: "▶";
+  font-size: 0.75rem;
+  margin-right: 0.5rem;
+  transition: transform 0.2s;
+}
+
+.notion-toggle[open] .notion-toggle-summary:before {
+  transform: rotate(90deg);
+}
